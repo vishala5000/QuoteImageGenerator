@@ -1,4 +1,3 @@
-```kotlin
 package com.quotegenerator
 
 import android.content.Context
@@ -656,4 +655,3 @@ class QuoteImageGenerator(
         }
     }
 }
-```
