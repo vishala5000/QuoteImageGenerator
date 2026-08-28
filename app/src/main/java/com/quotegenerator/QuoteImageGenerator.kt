@@ -2,9 +2,7 @@ package com.quotegenerator
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import java.io.File
@@ -18,124 +16,452 @@ class QuoteImageGenerator(
 ) {
 
     companion object {
+
         const val IMAGE_WIDTH = 1080
+
         const val IMAGE_HEIGHT = 1350
 
         const val TEXT_AREA_WIDTH = 680
+
         const val TEXT_AREA_HEIGHT = 850
 
         const val MAX_FONT_SIZE = 70
+
         const val MIN_FONT_SIZE = 20
 
         const val IMAGES_PER_FOLDER = 3
     }
 
     private val background: Bitmap
-    private val typeface: Typeface
 
-    private val paint = Paint(
-        Paint.ANTI_ALIAS_FLAG
-            or Paint.SUBPIXEL_TEXT_FLAG
-    ).apply {
-        color = Color.WHITE
-        textAlign = Paint.Align.CENTER
-    }
+    private val typeface: Typeface
 
     init {
 
-        // Load background ONCE
-        val input =
-            context.assets.open("bg.png")
+        background =
+            context.assets.open(
+                "bg.png"
+            ).use {
 
-        val original =
-            BitmapFactory.decodeStream(input)
+                android.graphics.BitmapFactory
+                    .decodeStream(it)
+            }
+                ?: throw Exception(
+                    "Could not load bg.png"
+                )
 
-        input.close()
+        typeface =
+            context.assets.open(
+                "font.ttf"
+            ).use {
 
-        requireNotNull(original) {
-            "Unable to load Assets/bg.png"
+                Typeface.createFromFile(
+                    copyAssetToCache(
+                        "font.ttf"
+                    )
+                )
+            }
+    }
+
+    private fun copyAssetToCache(
+        name: String
+    ): File {
+
+        val output =
+            File(
+                context.cacheDir,
+                name
+            )
+
+        if (!output.exists()) {
+
+            context.assets
+                .open(name)
+                .use { input ->
+
+                    FileOutputStream(
+                        output
+                    ).use { file ->
+
+                        input.copyTo(file)
+                    }
+                }
         }
 
-        background =
-            resizeCrop(
-                original,
+        return output
+    }
+
+    fun generateAll(
+        quotes: List<String>,
+        outputDir: File,
+        progress: (Int, Int) -> Unit
+    ): List<File> {
+
+        if (outputDir.exists()) {
+
+            outputDir.deleteRecursively()
+        }
+
+        outputDir.mkdirs()
+
+        val results =
+            mutableListOf<File>()
+
+        quotes.forEachIndexed {
+                index,
+                quote ->
+
+            val number =
+                index + 1
+
+            val file =
+                generateImage(
+                    quote,
+                    number,
+                    outputDir
+                )
+
+            results.add(file)
+
+            progress(
+                number,
+                quotes.size
+            )
+        }
+
+        return results
+    }
+
+    private fun generateImage(
+        quote: String,
+        number: Int,
+        outputDir: File
+    ): File {
+
+        val bitmap =
+            Bitmap.createBitmap(
+                IMAGE_WIDTH,
+                IMAGE_HEIGHT,
+                Bitmap.Config.ARGB_8888
+            )
+
+        val canvas =
+            Canvas(bitmap)
+
+        val backgroundScaled =
+            resizeCropBackground(
+                background,
                 IMAGE_WIDTH,
                 IMAGE_HEIGHT
             )
 
-        if (original !== background) {
-            original.recycle()
-        }
+        canvas.drawBitmap(
+            backgroundScaled,
+            0f,
+            0f,
+            null
+        )
 
-        // Load font ONCE
-        typeface =
-            context.assets
-                .open("font.ttf")
-                .use { inputStream ->
+        backgroundScaled.recycle()
 
-                    Typeface.createFromFile(
-                        copyAssetToCache(
-                            inputStream,
-                            "generator_font.ttf"
-                        )
-                    )
-                }
-    }
+        val paint =
+            Paint(Paint.ANTI_ALIAS_FLAG)
 
-    private fun copyAssetToCache(
-        inputStream: java.io.InputStream,
-        filename: String
-    ): File {
+        paint.typeface =
+            typeface
 
-        val file =
-            File(
-                context.cacheDir,
-                filename
+        paint.color =
+            android.graphics.Color.WHITE
+
+        paint.textAlign =
+            Paint.Align.CENTER
+
+        val fitted =
+            fitText(
+                paint,
+                quote
             )
 
-        if (!file.exists()) {
+        paint.textSize =
+            fitted.fontSize.toFloat()
 
-            FileOutputStream(file).use { output ->
+        val lines =
+            fitted.lines
 
-                inputStream.copyTo(output)
+        val lineSpacing =
+            max(
+                5,
+                (fitted.fontSize * 0.20f)
+                    .toInt()
+            )
+
+        val totalHeight =
+            lines.size *
+                fitted.fontSize +
+                (lines.size - 1) *
+                lineSpacing
+
+        var y =
+            IMAGE_HEIGHT / 2f -
+                totalHeight / 2f -
+                paint.ascent()
+
+        val centerX =
+            IMAGE_WIDTH / 2f
+
+        for (line in lines) {
+
+            canvas.drawText(
+                line,
+                centerX,
+                y,
+                paint
+            )
+
+            y +=
+                fitted.fontSize +
+                lineSpacing
+        }
+
+        val output =
+            File(
+                outputDir,
+                "$number.png"
+            )
+
+        FileOutputStream(
+            output
+        ).use {
+
+            bitmap.compress(
+                Bitmap.CompressFormat.PNG,
+                100,
+                it
+            )
+        }
+
+        bitmap.recycle()
+
+        return output
+    }
+
+    private data class FittedText(
+        val lines: List<String>,
+        val fontSize: Int
+    )
+
+    private fun fitText(
+        paint: Paint,
+        text: String
+    ): FittedText {
+
+        for (
+            size in
+            MAX_FONT_SIZE downTo MIN_FONT_SIZE
+        ) {
+
+            paint.textSize =
+                size.toFloat()
+
+            val lines =
+                wrapText(
+                    paint,
+                    text,
+                    TEXT_AREA_WIDTH
+                )
+
+            val spacing =
+                max(
+                    5,
+                    (size * 0.20f).toInt()
+                )
+
+            val totalHeight =
+                lines.size * size +
+                    (lines.size - 1) *
+                    spacing
+
+            val maxWidth =
+                lines.maxOfOrNull {
+                    paint.measureText(it)
+                }
+                    ?: 0f
+
+            if (
+                maxWidth <=
+                    TEXT_AREA_WIDTH &&
+                totalHeight <=
+                    TEXT_AREA_HEIGHT
+            ) {
+
+                return FittedText(
+                    lines,
+                    size
+                )
             }
         }
 
-        return file
+        paint.textSize =
+            MIN_FONT_SIZE.toFloat()
+
+        return FittedText(
+            wrapText(
+                paint,
+                text,
+                TEXT_AREA_WIDTH
+            ),
+            MIN_FONT_SIZE
+        )
     }
 
-    private fun resizeCrop(
+    private fun wrapText(
+        paint: Paint,
+        text: String,
+        maxWidth: Int
+    ): List<String> {
+
+        val words =
+            text.trim()
+                .split(
+                    Regex("\\s+")
+                )
+
+        if (words.isEmpty()) {
+
+            return emptyList()
+        }
+
+        val lines =
+            mutableListOf<String>()
+
+        var current =
+            ""
+
+        for (word in words) {
+
+            val test =
+                if (current.isEmpty()) {
+
+                    word
+
+                } else {
+
+                    "$current $word"
+                }
+
+            if (
+                paint.measureText(test) <=
+                    maxWidth
+            ) {
+
+                current =
+                    test
+
+            } else {
+
+                if (current.isNotEmpty()) {
+
+                    lines.add(current)
+                }
+
+                if (
+                    paint.measureText(word) <=
+                        maxWidth
+                ) {
+
+                    current =
+                        word
+
+                } else {
+
+                    var partial =
+                        ""
+
+                    for (char in word) {
+
+                        val testChar =
+                            partial + char
+
+                        if (
+                            paint.measureText(
+                                testChar
+                            ) <= maxWidth
+                        ) {
+
+                            partial =
+                                testChar
+
+                        } else {
+
+                            if (
+                                partial.isNotEmpty()
+                            ) {
+
+                                lines.add(
+                                    partial
+                                )
+                            }
+
+                            partial =
+                                char.toString()
+                        }
+                    }
+
+                    current =
+                        partial
+                }
+            }
+        }
+
+        if (current.isNotEmpty()) {
+
+            lines.add(current)
+        }
+
+        return lines
+    }
+
+    private fun resizeCropBackground(
         source: Bitmap,
-        targetWidth: Int,
-        targetHeight: Int
+        width: Int,
+        height: Int
     ): Bitmap {
 
         val sourceRatio =
             source.width.toFloat() /
-            source.height.toFloat()
+                source.height.toFloat()
 
         val targetRatio =
-            targetWidth.toFloat() /
-            targetHeight.toFloat()
+            width.toFloat() /
+                height.toFloat()
 
         val newWidth: Int
+
         val newHeight: Int
 
-        if (sourceRatio > targetRatio) {
+        if (
+            sourceRatio > targetRatio
+        ) {
 
-            newHeight = targetHeight
+            newHeight =
+                height
 
             newWidth =
-                (newHeight * sourceRatio)
-                    .toInt()
+                (
+                    height *
+                        sourceRatio
+                    ).toInt()
 
         } else {
 
-            newWidth = targetWidth
+            newWidth =
+                width
 
             newHeight =
-                (newWidth / sourceRatio)
-                    .toInt()
+                (
+                    width /
+                        sourceRatio
+                    ).toInt()
         }
 
         val resized =
@@ -147,327 +473,24 @@ class QuoteImageGenerator(
             )
 
         val left =
-            (newWidth - targetWidth) / 2
+            (newWidth - width) / 2
 
         val top =
-            (newHeight - targetHeight) / 2
+            (newHeight - height) / 2
 
         return Bitmap.createBitmap(
             resized,
             left,
             top,
-            targetWidth,
-            targetHeight
+            width,
+            height
         ).also {
 
-            if (resized !== source) {
+            if (it !== resized) {
+
                 resized.recycle()
             }
         }
-    }
-
-    private fun wrapText(
-        text: String,
-        maxWidth: Float
-    ): List<String> {
-
-        val words =
-            text.trim()
-                .split(Regex("\\s+"))
-                .filter {
-                    it.isNotEmpty()
-                }
-
-        if (words.isEmpty()) {
-            return emptyList()
-        }
-
-        val lines =
-            mutableListOf<String>()
-
-        var current = ""
-
-        for (word in words) {
-
-            val test =
-                if (current.isEmpty()) {
-                    word
-                } else {
-                    "$current $word"
-                }
-
-            if (
-                paint.measureText(test)
-                <= maxWidth
-            ) {
-
-                current = test
-
-            } else {
-
-                if (current.isNotEmpty()) {
-                    lines.add(current)
-                }
-
-                // Handle words wider than the area
-                if (
-                    paint.measureText(word)
-                    <= maxWidth
-                ) {
-
-                    current = word
-
-                } else {
-
-                    var part = ""
-
-                    for (character in word) {
-
-                        val testPart =
-                            part + character
-
-                        if (
-                            paint.measureText(
-                                testPart
-                            ) <= maxWidth
-                        ) {
-
-                            part = testPart
-
-                        } else {
-
-                            if (part.isNotEmpty()) {
-                                lines.add(part)
-                            }
-
-                            part =
-                                character.toString()
-                        }
-                    }
-
-                    current = part
-                }
-            }
-        }
-
-        if (current.isNotEmpty()) {
-            lines.add(current)
-        }
-
-        return lines
-    }
-
-    private data class FitResult(
-        val lines: List<String>,
-        val fontSize: Float,
-        val spacing: Float
-    )
-
-    private fun fitText(
-        quote: String
-    ): FitResult {
-
-        for (
-            size in
-            MAX_FONT_SIZE downTo MIN_FONT_SIZE
-        ) {
-
-            paint.typeface = typeface
-            paint.textSize = size.toFloat()
-
-            val lines =
-                wrapText(
-                    quote,
-                    TEXT_AREA_WIDTH.toFloat()
-                )
-
-            val metrics =
-                paint.fontMetrics
-
-            val lineHeight =
-                metrics.descent -
-                metrics.ascent
-
-            val spacing =
-                max(
-                    5f,
-                    size * 0.20f
-                )
-
-            val totalHeight =
-                lines.size * lineHeight +
-                max(
-                    0,
-                    lines.size - 1
-                ) * spacing
-
-            var maximumWidth = 0f
-
-            for (line in lines) {
-
-                maximumWidth =
-                    max(
-                        maximumWidth,
-                        paint.measureText(line)
-                    )
-            }
-
-            if (
-                maximumWidth <=
-                TEXT_AREA_WIDTH
-                &&
-                totalHeight <=
-                TEXT_AREA_HEIGHT
-            ) {
-
-                return FitResult(
-                    lines,
-                    size.toFloat(),
-                    spacing
-                )
-            }
-        }
-
-        paint.typeface = typeface
-        paint.textSize =
-            MIN_FONT_SIZE.toFloat()
-
-        return FitResult(
-            wrapText(
-                quote,
-                TEXT_AREA_WIDTH.toFloat()
-            ),
-            MIN_FONT_SIZE.toFloat(),
-            max(
-                5f,
-                MIN_FONT_SIZE * 0.20f
-            )
-        )
-    }
-
-    fun generateImage(
-        quote: String,
-        number: Int,
-        outputDir: File
-    ): File {
-
-        val image =
-            background.copy(
-                Bitmap.Config.ARGB_8888,
-                true
-            )
-
-        val canvas =
-            Canvas(image)
-
-        val result =
-            fitText(quote)
-
-        paint.typeface =
-            typeface
-
-        paint.textSize =
-            result.fontSize
-
-        paint.color =
-            Color.WHITE
-
-        paint.textAlign =
-            Paint.Align.CENTER
-
-        val metrics =
-            paint.fontMetrics
-
-        val lineHeight =
-            metrics.descent -
-            metrics.ascent
-
-        val totalHeight =
-            result.lines.size * lineHeight +
-            max(
-                0,
-                result.lines.size - 1
-            ) * result.spacing
-
-        var y =
-            IMAGE_HEIGHT / 2f -
-            totalHeight / 2f -
-            metrics.ascent
-
-        for (line in result.lines) {
-
-            canvas.drawText(
-                line,
-                IMAGE_WIDTH / 2f,
-                y,
-                paint
-            )
-
-            y +=
-                lineHeight +
-                result.spacing
-        }
-
-        if (!outputDir.exists()) {
-            outputDir.mkdirs()
-        }
-
-        val output =
-            File(
-                outputDir,
-                "$number.png"
-            )
-
-        FileOutputStream(output).use { stream ->
-
-            image.compress(
-                Bitmap.CompressFormat.PNG,
-                100,
-                stream
-            )
-        }
-
-        image.recycle()
-
-        return output
-    }
-
-    fun generateAll(
-        quotes: List<String>,
-        outputDir: File,
-        onProgress: ((current: Int, total: Int) -> Unit)? = null
-    ): List<File> {
-
-        if (outputDir.exists()) {
-            outputDir.deleteRecursively()
-        }
-
-        outputDir.mkdirs()
-
-        val images =
-            ArrayList<File>(quotes.size)
-
-        quotes.forEachIndexed { index, quote ->
-
-            val number =
-                index + 1
-
-            val image =
-                generateImage(
-                    quote,
-                    number,
-                    outputDir
-                )
-
-            images.add(image)
-
-            onProgress?.invoke(
-                number,
-                quotes.size
-            )
-        }
-
-        return images
     }
 
     fun createZip(
@@ -475,33 +498,32 @@ class QuoteImageGenerator(
         zipFile: File
     ) {
 
-        if (zipFile.exists()) {
-            zipFile.delete()
-        }
-
         ZipOutputStream(
             FileOutputStream(zipFile)
         ).use { zip ->
 
-            images.forEachIndexed { index, image ->
+            images.forEachIndexed {
+                    index,
+                    file ->
 
-                val imageNumber =
+                val number =
                     index + 1
 
-                val folderNumber =
+                val folder =
                     (
-                        (imageNumber - 1) /
-                        IMAGES_PER_FOLDER
-                    ) + 1
+                        (number - 1) /
+                            IMAGES_PER_FOLDER
+                        ) + 1
 
                 val entryName =
-                    "$folderNumber/$imageNumber.png"
+                    "$folder/$number.png"
 
                 zip.putNextEntry(
                     ZipEntry(entryName)
                 )
 
-                image.inputStream().use { input ->
+                file.inputStream().use {
+                    input ->
 
                     input.copyTo(zip)
                 }
