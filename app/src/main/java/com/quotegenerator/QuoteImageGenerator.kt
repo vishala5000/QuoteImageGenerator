@@ -4,15 +4,14 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Rect
 import android.graphics.Typeface
 import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.math.max
-import kotlin.math.min
 
 class QuoteImageGenerator(
     private val context: Context
@@ -31,28 +30,78 @@ class QuoteImageGenerator(
         const val IMAGES_PER_FOLDER = 3
     }
 
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.WHITE
+    private val background: Bitmap
+    private val typeface: Typeface
+
+    private val paint = Paint(
+        Paint.ANTI_ALIAS_FLAG
+            or Paint.SUBPIXEL_TEXT_FLAG
+    ).apply {
+        color = Color.WHITE
         textAlign = Paint.Align.CENTER
     }
 
-    private fun loadBackground(): Bitmap {
-        val input = context.assets.open("bg.png")
-        val bitmap = BitmapFactory.decodeStream(input)
+    init {
+
+        // Load background ONCE
+        val input =
+            context.assets.open("bg.png")
+
+        val original =
+            BitmapFactory.decodeStream(input)
+
         input.close()
 
-        return resizeCrop(
-            bitmap,
-            IMAGE_WIDTH,
-            IMAGE_HEIGHT
-        )
+        requireNotNull(original) {
+            "Unable to load Assets/bg.png"
+        }
+
+        background =
+            resizeCrop(
+                original,
+                IMAGE_WIDTH,
+                IMAGE_HEIGHT
+            )
+
+        if (original !== background) {
+            original.recycle()
+        }
+
+        // Load font ONCE
+        typeface =
+            context.assets
+                .open("font.ttf")
+                .use { inputStream ->
+
+                    Typeface.createFromFile(
+                        copyAssetToCache(
+                            inputStream,
+                            "generator_font.ttf"
+                        )
+                    )
+                }
     }
 
-    private fun loadFont(): Typeface {
-        return Typeface.createFromAsset(
-            context.assets,
-            "font.ttf"
-        )
+    private fun copyAssetToCache(
+        inputStream: java.io.InputStream,
+        filename: String
+    ): File {
+
+        val file =
+            File(
+                context.cacheDir,
+                filename
+            )
+
+        if (!file.exists()) {
+
+            FileOutputStream(file).use { output ->
+
+                inputStream.copyTo(output)
+            }
+        }
+
+        return file
     }
 
     private fun resizeCrop(
@@ -62,10 +111,12 @@ class QuoteImageGenerator(
     ): Bitmap {
 
         val sourceRatio =
-            source.width.toFloat() / source.height.toFloat()
+            source.width.toFloat() /
+            source.height.toFloat()
 
         val targetRatio =
-            targetWidth.toFloat() / targetHeight.toFloat()
+            targetWidth.toFloat() /
+            targetHeight.toFloat()
 
         val newWidth: Int
         val newHeight: Int
@@ -75,22 +126,25 @@ class QuoteImageGenerator(
             newHeight = targetHeight
 
             newWidth =
-                (newHeight * sourceRatio).toInt()
+                (newHeight * sourceRatio)
+                    .toInt()
 
         } else {
 
             newWidth = targetWidth
 
             newHeight =
-                (newWidth / sourceRatio).toInt()
+                (newWidth / sourceRatio)
+                    .toInt()
         }
 
-        val resized = Bitmap.createScaledBitmap(
-            source,
-            newWidth,
-            newHeight,
-            true
-        )
+        val resized =
+            Bitmap.createScaledBitmap(
+                source,
+                newWidth,
+                newHeight,
+                true
+            )
 
         val left =
             (newWidth - targetWidth) / 2
@@ -104,32 +158,32 @@ class QuoteImageGenerator(
             top,
             targetWidth,
             targetHeight
-        )
-    }
+        ).also {
 
-    private fun textWidth(
-        text: String,
-        paint: Paint
-    ): Float {
-
-        return paint.measureText(text)
+            if (resized !== source) {
+                resized.recycle()
+            }
+        }
     }
 
     private fun wrapText(
         text: String,
-        paint: Paint,
         maxWidth: Float
     ): List<String> {
 
-        val words = text.trim().split(
-            Regex("\\s+")
-        )
+        val words =
+            text.trim()
+                .split(Regex("\\s+"))
+                .filter {
+                    it.isNotEmpty()
+                }
 
         if (words.isEmpty()) {
             return emptyList()
         }
 
-        val lines = mutableListOf<String>()
+        val lines =
+            mutableListOf<String>()
 
         var current = ""
 
@@ -142,7 +196,10 @@ class QuoteImageGenerator(
                     "$current $word"
                 }
 
-            if (textWidth(test, paint) <= maxWidth) {
+            if (
+                paint.measureText(test)
+                <= maxWidth
+            ) {
 
                 current = test
 
@@ -152,8 +209,9 @@ class QuoteImageGenerator(
                     lines.add(current)
                 }
 
+                // Handle words wider than the area
                 if (
-                    textWidth(word, paint)
+                    paint.measureText(word)
                     <= maxWidth
                 ) {
 
@@ -169,9 +227,8 @@ class QuoteImageGenerator(
                             part + character
 
                         if (
-                            textWidth(
-                                testPart,
-                                paint
+                            paint.measureText(
+                                testPart
                             ) <= maxWidth
                         ) {
 
@@ -183,7 +240,8 @@ class QuoteImageGenerator(
                                 lines.add(part)
                             }
 
-                            part = character.toString()
+                            part =
+                                character.toString()
                         }
                     }
 
@@ -202,12 +260,11 @@ class QuoteImageGenerator(
     private data class FitResult(
         val lines: List<String>,
         val fontSize: Float,
-        val lineSpacing: Float
+        val spacing: Float
     )
 
     private fun fitText(
-        quote: String,
-        typeface: Typeface
+        quote: String
     ): FitResult {
 
         for (
@@ -215,22 +272,21 @@ class QuoteImageGenerator(
             MAX_FONT_SIZE downTo MIN_FONT_SIZE
         ) {
 
-            textPaint.typeface = typeface
-            textPaint.textSize = size.toFloat()
+            paint.typeface = typeface
+            paint.textSize = size.toFloat()
 
             val lines =
                 wrapText(
                     quote,
-                    textPaint,
                     TEXT_AREA_WIDTH.toFloat()
                 )
 
-            val fontMetrics =
-                textPaint.fontMetrics
+            val metrics =
+                paint.fontMetrics
 
             val lineHeight =
-                fontMetrics.descent -
-                fontMetrics.ascent
+                metrics.descent -
+                metrics.ascent
 
             val spacing =
                 max(
@@ -245,22 +301,19 @@ class QuoteImageGenerator(
                     lines.size - 1
                 ) * spacing
 
-            var maxWidth = 0f
+            var maximumWidth = 0f
 
             for (line in lines) {
 
-                maxWidth =
+                maximumWidth =
                     max(
-                        maxWidth,
-                        textWidth(
-                            line,
-                            textPaint
-                        )
+                        maximumWidth,
+                        paint.measureText(line)
                     )
             }
 
             if (
-                maxWidth <=
+                maximumWidth <=
                 TEXT_AREA_WIDTH
                 &&
                 totalHeight <=
@@ -275,19 +328,15 @@ class QuoteImageGenerator(
             }
         }
 
-        textPaint.typeface = typeface
-        textPaint.textSize =
+        paint.typeface = typeface
+        paint.textSize =
             MIN_FONT_SIZE.toFloat()
 
-        val lines =
+        return FitResult(
             wrapText(
                 quote,
-                textPaint,
                 TEXT_AREA_WIDTH.toFloat()
-            )
-
-        return FitResult(
-            lines,
+            ),
             MIN_FONT_SIZE.toFloat(),
             max(
                 5f,
@@ -302,55 +351,48 @@ class QuoteImageGenerator(
         outputDir: File
     ): File {
 
-        val background =
-            loadBackground()
-
-        val typeface =
-            loadFont()
-
-        val bitmap =
+        val image =
             background.copy(
                 Bitmap.Config.ARGB_8888,
                 true
             )
 
         val canvas =
-            Canvas(bitmap)
+            Canvas(image)
 
         val result =
-            fitText(
-                quote,
-                typeface
-            )
+            fitText(quote)
 
-        textPaint.typeface = typeface
-        textPaint.textSize =
+        paint.typeface =
+            typeface
+
+        paint.textSize =
             result.fontSize
 
-        textPaint.color =
-            android.graphics.Color.WHITE
+        paint.color =
+            Color.WHITE
 
-        textPaint.textAlign =
+        paint.textAlign =
             Paint.Align.CENTER
 
-        val fontMetrics =
-            textPaint.fontMetrics
+        val metrics =
+            paint.fontMetrics
 
         val lineHeight =
-            fontMetrics.descent -
-            fontMetrics.ascent
+            metrics.descent -
+            metrics.ascent
 
         val totalHeight =
             result.lines.size * lineHeight +
             max(
                 0,
                 result.lines.size - 1
-            ) * result.lineSpacing
+            ) * result.spacing
 
         var y =
             IMAGE_HEIGHT / 2f -
             totalHeight / 2f -
-            fontMetrics.ascent
+            metrics.ascent
 
         for (line in result.lines) {
 
@@ -358,12 +400,12 @@ class QuoteImageGenerator(
                 line,
                 IMAGE_WIDTH / 2f,
                 y,
-                textPaint
+                paint
             )
 
             y +=
                 lineHeight +
-                result.lineSpacing
+                result.spacing
         }
 
         if (!outputDir.exists()) {
@@ -378,21 +420,22 @@ class QuoteImageGenerator(
 
         FileOutputStream(output).use { stream ->
 
-            bitmap.compress(
+            image.compress(
                 Bitmap.CompressFormat.PNG,
                 100,
                 stream
             )
         }
 
-        bitmap.recycle()
+        image.recycle()
 
         return output
     }
 
     fun generateAll(
         quotes: List<String>,
-        outputDir: File
+        outputDir: File,
+        onProgress: ((current: Int, total: Int) -> Unit)? = null
     ): List<File> {
 
         if (outputDir.exists()) {
@@ -401,26 +444,30 @@ class QuoteImageGenerator(
 
         outputDir.mkdirs()
 
-        val background =
-            loadBackground()
-
-        background.recycle()
-
-        val generated =
-            mutableListOf<File>()
+        val images =
+            ArrayList<File>(quotes.size)
 
         quotes.forEachIndexed { index, quote ->
 
-            generated.add(
+            val number =
+                index + 1
+
+            val image =
                 generateImage(
                     quote,
-                    index + 1,
+                    number,
                     outputDir
                 )
+
+            images.add(image)
+
+            onProgress?.invoke(
+                number,
+                quotes.size
             )
         }
 
-        return generated
+        return images
     }
 
     fun createZip(
@@ -442,8 +489,10 @@ class QuoteImageGenerator(
                     index + 1
 
                 val folderNumber =
-                    ((imageNumber - 1) /
-                        IMAGES_PER_FOLDER) + 1
+                    (
+                        (imageNumber - 1) /
+                        IMAGES_PER_FOLDER
+                    ) + 1
 
                 val entryName =
                     "$folderNumber/$imageNumber.png"
